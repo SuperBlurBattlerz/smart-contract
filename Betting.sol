@@ -138,6 +138,11 @@ contract Betting is ReentrancyGuard {
     event NewRace(uint256 raceId);
     event NewBet(uint256 indexed raceId, address indexed degen, address indexed racer, uint256 amount);
     event RaceEnd(uint256 indexed raceId, address indexed winner);
+    event RewardDistributed(address indexed to, uint amount);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event BeneficiaryTransferred(address indexed previousBeneficiary, address indexed newBeneficiary);
+    event RaceAdminUpdated(address indexed raceAdmin, bool flag);
+    event PointsOperatorTransferred(address indexed newOperator);
 
     uint256 public currentRaceIndex = 0;
     // race id => race
@@ -145,8 +150,8 @@ contract Betting is ReentrancyGuard {
     mapping(address => bool) public allTimeDegens;
 
     address owner;
-    address beneficiary1 = 0xb9b1613D7c2E5ac54312365E9f10e6E49164915F;
-    address beneficiary2 = 0xaDd75E3E07c72793587DC845812cfEC17A5b04F8;
+    address beneficiary1;
+    address beneficiary2;
     mapping(address => bool) public raceAdmins;
 
     modifier onlyOwner() {
@@ -206,22 +211,32 @@ contract Betting is ReentrancyGuard {
     }
 
     function setPointsOperator(address _pointsOperator) public onlyOwner {
+        emit PointsOperatorTransferred(_pointsOperator);
+
         BLAST_POINTS.configurePointsOperator(_pointsOperator);
     }
 
     function setOwner(address _owner) external onlyOwner {
+        emit OwnershipTransferred(owner, _owner);
+
         owner = _owner;
     }
 
     function updateB1(address _b1) external onlyOwner {
+        emit BeneficiaryTransferred(beneficiary1, _b1);
+
         beneficiary1 = _b1;
     }
 
     function updateB2(address _b2) external onlyOwner {
+        emit BeneficiaryTransferred(beneficiary2, _b2);
+
         beneficiary2 = _b2;
     }
 
     function setRaceAdmin(address admin, bool flag) external onlyOwner {
+        emit RaceAdminUpdated(admin, flag);
+
         raceAdmins[admin] = flag;
     }
 
@@ -256,7 +271,7 @@ contract Betting is ReentrancyGuard {
     }
 
     function betMore(address winner) external payable {
-         Race storage race = races[currentRaceIndex];
+        Race storage race = races[currentRaceIndex];
 
         require(msg.value >= MIN_BET, "Bet too low.");
         require(
@@ -264,6 +279,7 @@ contract Betting is ReentrancyGuard {
                 block.number < race.bettingEndBlock,
                 "Outside of betting window."
         );
+        require(block.timestamp < race.raceStartTimestamp, "Race has already started.");
         require(_isRacerInTheRace(race, winner), "This address isn't in the race.");
 
         if (race.bets[winner][msg.sender] == 0) {
@@ -312,7 +328,7 @@ contract Betting is ReentrancyGuard {
         }
     }
 
-    function distributeRewards() external onlyRaceAdmin {
+    function distributeRewards() external nonReentrant onlyRaceAdmin {
         Race storage race = races[currentRaceIndex];
 
         require(race.winner != address(0), "Winner hasn't been set yet.");
@@ -329,7 +345,7 @@ contract Betting is ReentrancyGuard {
         distributeFees();
     }
 
-    function distributeRewards(uint start, uint end) external onlyRaceAdmin {
+    function distributeRewards(uint start, uint end) external nonReentrant onlyRaceAdmin {
         Race storage race = races[currentRaceIndex];
 
         require(race.winner != address(0), "Winner hasn't been set yet.");
@@ -357,12 +373,14 @@ contract Betting is ReentrancyGuard {
 
         if (race.winnerReward != 0) {
             _sendEth(race.winner, race.winnerReward);
+
+            emit RewardDistributed(race.winner, race.winnerReward);
         }
 
         _closeRace();
     }
 
-    function _sendEth(address to, uint amount) private nonReentrant {
+    function _sendEth(address to, uint amount) private {
         to.call{value: amount}("");
     }
 
@@ -390,6 +408,8 @@ contract Betting is ReentrancyGuard {
             uint amount = allTimeDegens[race.winner] ? address(this).balance / 2 : address(this).balance * FEE_WINNER / 100;
 
             _sendEth(race.winner, amount);
+
+            emit RewardDistributed(race.winner, amount);
         }
 
         _closeRace();
@@ -417,7 +437,10 @@ contract Betting is ReentrancyGuard {
                 race.rewardsDistributed[degen] = true;
                 ++race.rewardsDistributedCount;
 
-                _sendEth(degen, (race.bets[race.winner][degen] * totalWinningsPool) / race.winnersBetsAmount);
+                uint amount = (race.bets[race.winner][degen] * totalWinningsPool) / race.winnersBetsAmount;
+                _sendEth(degen, amount);
+
+                emit RewardDistributed(degen, amount);
             }
 
             unchecked { ++start; }
@@ -427,7 +450,6 @@ contract Betting is ReentrancyGuard {
     function _closeRace() private {
         address me = address(this);
 
-        // we can trust this, right?
         BLAST.claimAllGas(me, me);
 
         if (me.balance != 0) {
