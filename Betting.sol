@@ -165,7 +165,7 @@ contract Betting is ReentrancyGuard {
     }
 
     IBlast public constant BLAST = IBlast(0x4300000000000000000000000000000000000002);
-    IBlastPoints public constant BLAST_POINTS = IBlastPoints(0x2fc95838c71e76ec69ff817983BFf17c710F34E0);
+    IBlastPoints public constant BLAST_POINTS = IBlastPoints(0x2536FE9ab3F511540F2f9e2eC2A805005C3Dd800);
 
     constructor(address _owner, address _pointsOperator) {
         owner = _owner;
